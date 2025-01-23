@@ -10,6 +10,7 @@ import { ordinalWeeksRule } from './rules/ordinal-weeks';
 import { relativeWeeksRule } from './rules/relative-weeks';
 import { fuzzyRangesRule } from './rules/fuzzy-ranges';
 import { timeRangesRule } from './rules/time-ranges';
+import { holidaysRule } from './rules/holidays';
 
 const defaultRules = [
   absoluteDatesRule,  // ISO dates, YYYY-MM-DD etc
@@ -21,7 +22,8 @@ const defaultRules = [
   partialMonthRule,   // early/mid/late month
   ordinalWeeksRule,   // first week of March
   relativeWeeksRule,  // next week, last week
-  fuzzyRangesRule     // beginning of year, etc
+  fuzzyRangesRule,    // beginning of year, etc
+  holidaysRule        // holidays like Christmas, Easter, etc
 ];
 
 export const createNLDP = (preferences: DateParsePreferences = {}): NLDP => {

@@ -1,106 +1,153 @@
-import { RuleModule, IntermediateParse, ParseResult, DateParsePreferences, Pattern } from '../types/types';
+import { RuleModule, ParseResult, DateParsePreferences, Pattern } from '../types/types';
 import { DateTime } from 'luxon';
 
-function getWeekRange(date: DateTime, weekStartsOn: number = 0): { start: DateTime; end: DateTime } {
-  // Luxon uses 1-7 (Monday=1, Sunday=7)
-  // Calculate days to subtract to get to the start of the week
-  const daysToSubtract = ((date.weekday - weekStartsOn + 7) % 7);
-  
-  // Get start and end of week
-  const start = date.minus({ days: daysToSubtract }).startOf('day');
-  const end = start.plus({ days: 6 }).endOf('day');
+function createDateTimeInZone(year: number, month: number, day: number, hour: number = 0, minute: number = 0, preferences?: DateParsePreferences): DateTime {
+  // Create date in the target timezone directly to avoid conversion issues
+  const zone = preferences?.timeZone || 'UTC';
+  return DateTime.fromObject(
+    { year, month, day, hour, minute },
+    { zone }
+  );
+}
 
-  return { start, end };
+function getNextWeekday(date: DateTime, weekday: number): DateTime {
+  let result = date.plus({ days: 1 });
+  while (result.weekday !== weekday) {
+    result = result.plus({ days: 1 });
+  }
+  return result;
 }
 
 const patterns: Pattern[] = [
+  // Every other week
   {
-    regex: /^(this|next|last)\s+week$/i,
+    regex: /^every\s+other\s+(?:week\s+on\s+)?(\w+)$/i,
     parse: (matches: RegExpExecArray, preferences: DateParsePreferences): ParseResult | null => {
-      const [_, modifier] = matches;
-      const referenceDate = preferences.referenceDate || DateTime.now();
-      const weekStartsOn = preferences.weekStartsOn;
+      const dayName = matches[1].toLowerCase();
+      const weekdays: Record<string, number> = {
+        'monday': 1, 'mon': 1,
+        'tuesday': 2, 'tue': 2,
+        'wednesday': 3, 'wed': 3,
+        'thursday': 4, 'thu': 4,
+        'friday': 5, 'fri': 5,
+        'saturday': 6, 'sat': 6,
+        'sunday': 7, 'sun': 7
+      };
 
-      let targetDate = referenceDate;
-      switch (modifier.toLowerCase()) {
-        case 'next':
-          targetDate = referenceDate.plus({ weeks: 1 });
-          break;
-        case 'last':
-          targetDate = referenceDate.minus({ weeks: 1 });
-          break;
+      const weekday = weekdays[dayName];
+      if (!weekday) return null;
+
+      const referenceDate = preferences.referenceDate || DateTime.now().setZone(preferences.timeZone || 'UTC');
+      let start = getNextWeekday(referenceDate, weekday);
+      
+      // Ensure start date is in the correct timezone
+      start = createDateTimeInZone(
+        start.year,
+        start.month,
+        start.day,
+        start.hour,
+        start.minute,
+        preferences
+      );
+
+      return {
+        type: 'recurring',
+        start,
+        confidence: 1,
+        text: matches[0],
+        recurrence: {
+          interval: 14, // 14 days = every other week
+          dayOfWeek: weekday,
+          frequency: 'weekly'
+        }
+      };
+    }
+  },
+  // Daily/Weekly/Monthly patterns
+  {
+    regex: /^(daily|weekly|monthly)(?:\s+at\s+(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?)?$/i,
+    parse: (matches: RegExpExecArray, preferences: DateParsePreferences): ParseResult | null => {
+      const [_, frequency, hours, minutes, meridiem] = matches;
+      const referenceDate = preferences.referenceDate || DateTime.now().setZone(preferences.timeZone || 'UTC');
+      
+      let hour = hours ? parseInt(hours) : 9; // Default to 9 AM
+      const minute = minutes ? parseInt(minutes) : 0;
+
+      if (meridiem) {
+        if (hour > 12) return null;
+        if (meridiem.toUpperCase() === 'PM' && hour < 12) hour += 12;
+        if (meridiem.toUpperCase() === 'AM' && hour === 12) hour = 0;
       }
 
-      const { start, end } = getWeekRange(targetDate, weekStartsOn);
+      const start = createDateTimeInZone(
+        referenceDate.year,
+        referenceDate.month,
+        referenceDate.day,
+        hour,
+        minute,
+        preferences
+      );
+
+      const intervals: Record<string, number> = {
+        'daily': 1,
+        'weekly': 7,
+        'monthly': 0 // Special case handled by frequency
+      };
+
+      const freqLower = frequency.toLowerCase();
+      if (freqLower !== 'daily' && freqLower !== 'weekly' && freqLower !== 'monthly') {
+        return null;
+      }
 
       return {
-        type: 'range',
+        type: 'recurring',
         start,
-        end,
         confidence: 1,
-        text: matches[0]
+        text: matches[0],
+        recurrence: {
+          interval: intervals[freqLower],
+          frequency: freqLower as 'daily' | 'weekly' | 'monthly'
+        }
       };
     }
   },
+  // Recurrence with end conditions
   {
-    regex: /^(the\s+)?week\s+after\s+next$/i,
-    parse: (_: RegExpExecArray, preferences: DateParsePreferences): ParseResult | null => {
-      const referenceDate = preferences.referenceDate || DateTime.now();
-      const weekStartsOn = preferences.weekStartsOn || 0;
-
-      const targetDate = referenceDate.plus({ weeks: 2 });
-      const { start, end } = getWeekRange(targetDate, weekStartsOn);
-
-      return {
-        type: 'range',
-        start,
-        end,
-        confidence: 1,
-        text: 'week after next'
-      };
-    }
-  },
-  {
-    regex: /^(\d+)\s+weeks?\s+(from\s+now|ago)$/i,
+    regex: /^every\s+(\w+)(?:\s+until\s+(.+))$/i,
     parse: (matches: RegExpExecArray, preferences: DateParsePreferences): ParseResult | null => {
-      const [_, count, direction] = matches;
-      const weeks = parseInt(count);
-      if (isNaN(weeks)) return null;
-
-      const referenceDate = preferences.referenceDate || DateTime.now();
-      const weekStartsOn = preferences.weekStartsOn || 0;
-
-      const targetDate = direction.includes('ago')
-        ? referenceDate.minus({ weeks })
-        : referenceDate.plus({ weeks });
-
-      const { start, end } = getWeekRange(targetDate, weekStartsOn);
-      return {
-        type: 'range',
-        start,
-        end,
-        confidence: 1,
-        text: matches[0]
+      const [_, dayName, endCondition] = matches;
+      const weekdays: Record<string, number> = {
+        'monday': 1, 'mon': 1,
+        'tuesday': 2, 'tue': 2,
+        'wednesday': 3, 'wed': 3,
+        'thursday': 4, 'thu': 4,
+        'friday': 5, 'fri': 5,
+        'saturday': 6, 'sat': 6,
+        'sunday': 7, 'sun': 7
       };
-    }
-  },
-  {
-    regex: /^upcoming\s+week$/i,
-    parse: (_: RegExpExecArray, preferences: DateParsePreferences): ParseResult | null => {
-      const referenceDate = preferences.referenceDate || DateTime.now();
-      const weekStartsOn = preferences.weekStartsOn || 0;
 
-      // "Upcoming week" always means next week, just like "upcoming Wednesday" means next Wednesday
-      const targetDate = referenceDate.plus({ weeks: 1 });
-      
-      const { start, end } = getWeekRange(targetDate, weekStartsOn);
+      const weekday = weekdays[dayName.toLowerCase()];
+      if (!weekday) return null;
+
+      const referenceDate = preferences.referenceDate || DateTime.now();
+      let start = getNextWeekday(referenceDate, weekday);
+      let endDate: DateTime | undefined;
+
+      if (endCondition.toLowerCase() === 'end of year') {
+        endDate = DateTime.utc(start.year, 12, 31);
+      }
 
       return {
-        type: 'range',
+        type: 'recurring',
         start,
-        end,
         confidence: 1,
-        text: 'upcoming week'
+        text: matches[0],
+        recurrence: {
+          interval: 7,
+          dayOfWeek: weekday,
+          frequency: 'weekly',
+          endDate
+        }
       };
     }
   }

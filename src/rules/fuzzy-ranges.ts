@@ -116,20 +116,80 @@ function getPeriodRange(part: string, period: string, referenceDate: DateTime): 
   }
 }
 
+function createDateTimeInZone(year: number, month: number, day: number, hour: number = 0, minute: number = 0, preferences?: DateParsePreferences): DateTime {
+  // Create date in the target timezone directly to avoid conversion issues
+  const zone = preferences?.timeZone || 'UTC';
+  return DateTime.fromObject(
+    { year, month, day, hour, minute },
+    { zone }
+  );
+}
+
 export const fuzzyRangesRule: RuleModule = {
   name: 'fuzzy-ranges',
   patterns: [
     {
-      regex: /^(this|next|the following)\s+weekend$/i,
+      regex: /^(?:this\s+)?weekend$/i,
       parse: (matches: RegExpExecArray, preferences: DateParsePreferences): ParseResult | null => {
-        const offset = matches[1].toLowerCase() === 'next' || 
-                      matches[1].toLowerCase() === 'the following' ? 1 : 0;
-        const { start, end } = getWeekendRange(preferences.referenceDate || DateTime.now(), offset);
+        const referenceDate = preferences.referenceDate || DateTime.now().setZone(preferences.timeZone || 'UTC');
+        const saturday = referenceDate.plus({ days: (6 - referenceDate.weekday) % 7 });
+        
+        const start = createDateTimeInZone(
+          saturday.year,
+          saturday.month,
+          saturday.day,
+          0,
+          0,
+          preferences
+        );
+
+        const end = createDateTimeInZone(
+          saturday.year,
+          saturday.month,
+          saturday.day + 1,
+          23,
+          59,
+          preferences
+        );
+
         return {
           type: 'range',
           start,
           end,
-          confidence: 1.0,
+          confidence: 1,
+          text: matches[0]
+        };
+      }
+    },
+    {
+      regex: /^next\s+weekend$/i,
+      parse: (matches: RegExpExecArray, preferences: DateParsePreferences): ParseResult | null => {
+        const referenceDate = preferences.referenceDate || DateTime.now().setZone(preferences.timeZone || 'UTC');
+        const nextSaturday = referenceDate.plus({ days: (6 - referenceDate.weekday) % 7 + 7 });
+        
+        const start = createDateTimeInZone(
+          nextSaturday.year,
+          nextSaturday.month,
+          nextSaturday.day,
+          0,
+          0,
+          preferences
+        );
+
+        const end = createDateTimeInZone(
+          nextSaturday.year,
+          nextSaturday.month,
+          nextSaturday.day + 1,
+          23,
+          59,
+          preferences
+        );
+
+        return {
+          type: 'range',
+          start,
+          end,
+          confidence: 1,
           text: matches[0]
         };
       }

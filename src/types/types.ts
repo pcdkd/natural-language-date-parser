@@ -19,12 +19,13 @@ export interface DateParsePreferences {
  * Result of a successful date/time parse
  */
 export interface ParseResult {
-  type: 'single' | 'range';
+  type: 'single' | 'range' | 'recurring';
   start: DateTime;
   end?: DateTime;
   confidence: number;
   text: string;
   debugTrace?: ParseTrace;
+  recurrence?: RecurrenceInfo;
 }
 
 export interface ParserState {
@@ -80,4 +81,13 @@ export interface RulePattern {
   name: string;
   regex: RegExp;
   parse: (matches: RegExpMatchArray, prefs: DateParsePreferences) => IntermediateParse | null;
+}
+
+export interface RecurrenceInfo {
+  interval: number;           // Number of days/weeks/months between occurrences
+  frequency: 'daily' | 'weekly' | 'monthly';
+  dayOfWeek?: number;        // 1-7 for Monday-Sunday
+  endDate?: DateTime;        // Optional end date for the recurrence
+  exceptions?: string[];     // Optional list of exceptions (e.g., 'holidays')
+  daysOfWeek?: number[];    // Optional list of days of week (1-7 for Monday-Sunday)
 } 
